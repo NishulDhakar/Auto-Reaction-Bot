@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/NishulDhakar/Auto-Reaction-Bot/main/assets/logo.png" alt="Auto Reaction Bot" width="180"/>
+<img width="1024" height="1024" alt="Pink heart in speech bubble icon" src="https://github.com/user-attachments/assets/cc9d3491-44e7-40a4-abd1-c3741f9b20d3" alt="Auto Reaction Bot" width="180"/>
 
 # ❤️ Auto Reaction Bot
 
@@ -34,7 +34,7 @@
 
 ---
 
-## 🤖 Commands
+## Commands
 
 | Command | Who | Description |
 |---|---|---|
@@ -46,7 +46,13 @@
 
 ---
 
-## ⚙️ Setup
+## Architecture
+
+<img width="1536" height="1024" alt="Telegram bot architecture diagram" src="https://github.com/user-attachments/assets/4ebbfeef-354b-4997-9902-c6cca32cefe7" />
+
+---
+
+## Setup
 
 ### 1. Clone the repo
 

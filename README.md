@@ -118,13 +118,11 @@ sudo systemctl enable auto-reaction-bot
 sudo systemctl start auto-reaction-bot
 ```
 
----
-
 <div align="center">
   <p>Built with ♥ by <a href="https://www.nishul.dev">Nishul Dhakar</a></p>
   <p>
     <a href="https://twitter.com/nishuldhakar">Twitter</a> •
-    <a href="https://github.com/Nishuldhakar">GitHub</a>
+    <a href="https://www.linkedin.com/in/nishuldhakar/">Linkedin</a>
   </p>
 </div>
 

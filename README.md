@@ -120,18 +120,11 @@ sudo systemctl start auto-reaction-bot
 
 ---
 
----
+<div align="center">
+  <p>Built with ♥ by <a href="https://www.nishul.dev">Nishul Dhakar</a></p>
+  <p>
+    <a href="https://twitter.com/nishuldhakar">Twitter</a> •
+    <a href="https://github.com/Nishuldhakar">GitHub</a>
+  </p>
+</div>
 
-## ⚠️ Important: Telegram Limitation
-
-Telegram only allows **one reaction per bot per message**. This bot rotates through a pool of emoji so each post gets a fresh, varied reaction.
-
----
-
-## 🧑‍💻 Author
-
-Built by [Nishul Dhakar](https://nishul.dev) · [GitHub](https://github.com/NishulDhakar)
-
-## ⚖️ License
-
-MIT — see [LICENSE](LICENSE)

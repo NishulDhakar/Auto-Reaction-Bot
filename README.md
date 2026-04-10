@@ -19,13 +19,12 @@
 
 ## ✨ Features
 
-- 🔁 **Auto-reacts** to every new channel post with emoji from a customizable pool
-- 👥 **Multi-chat support** — works across channels and groups
-- 💾 **SQLite persistence** — tracks users, channels, and reaction logs
-- 🛡️ **Admin controls** — broadcast, list all channels, manage users
-- 📡 **Systemd-ready** — designed for production on Linux servers
-- 🧹 **Auto-cleanup** — purges old reaction logs on a schedule
-- ⚡ **Built on python-telegram-bot v20+** (async, modern)
+-  **Auto-reacts** to every new channel post with emoji from a customizable pool
+-  **Multi-chat support** — works across channels and groups
+-  **Admin controls** — broadcast, list all channels, manage users
+-  **Systemd-ready** — designed for production on Linux servers
+-  **Auto-cleanup** — purges old reaction logs on a schedule
+-  **Built on python-telegram-bot v20+** (async, modern)
 
 ---
 

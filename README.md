@@ -1,111 +1,137 @@
-# reaction-bot
+<div align="center">
 
-Production-oriented Telegram bot in Python using `python-telegram-bot` v20+.
+<img src="https://raw.githubusercontent.com/NishulDhakar/Auto-Reaction-Bot/main/assets/logo.png" alt="Auto Reaction Bot" width="180"/>
 
-## What it does
+# ❤️ Auto Reaction Bot
 
-- Saves users on `/start`
-- Lists help on `/help`
-- Lists the current user's channels on `/mychannels`
-- Lists all known channels on `/allchannels` for admins
-- Broadcasts to all registered users on `/broadcasttoall` for admins
-- Watches new channel posts and applies reactions from a pool of 10 different emoji
+[![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&style=flat)](https://python.org)
+[![python-telegram-bot](https://img.shields.io/badge/python--telegram--bot-v20+-green?style=flat)](https://python-telegram-bot.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![DigitalOcean](https://img.shields.io/badge/Hosted%20on-DigitalOcean-0080FF?logo=digitalocean&style=flat)](https://digitalocean.com)
 
-## Important Telegram limitation
+**A production-ready Telegram bot that automatically reacts to posts in channels and groups — built with Python & python-telegram-bot v20+**
 
-Telegram currently allows a bot to keep only one selected reaction per message. This project therefore uses a pool of 10 reactions and rotates one reaction onto each new channel post.
+[Features](#-features) · [Setup](#-setup) · [Deploy](#-deployment) · [Commands](#-commands) · [Report Bug](https://github.com/NishulDhakar/Auto-Reaction-Bot/issues/new)
 
-## Project structure
+</div>
 
-```text
-bot.py
-handlers/
-  start.py
-  help.py
-  channels.py
-  channel_posts.py
-  broadcast.py
-jobs/
-  maintenance.py
-utils/
-  db.py
-  guards.py
-  formatters.py
-  logging.py
-  reactions.py
-config.py
-requirements.txt
+---
+
+## ✨ Features
+
+- 🔁 **Auto-reacts** to every new channel post with emoji from a customizable pool
+- 👥 **Multi-chat support** — works across channels and groups
+- 💾 **SQLite persistence** — tracks users, channels, and reaction logs
+- 🛡️ **Admin controls** — broadcast, list all channels, manage users
+- 📡 **Systemd-ready** — designed for production on Linux servers
+- 🧹 **Auto-cleanup** — purges old reaction logs on a schedule
+- ⚡ **Built on python-telegram-bot v20+** (async, modern)
+
+---
+
+## 📸 Preview
+
+> *(Add a GIF here showing the bot reacting to a channel post)*
+
+---
+
+## 🤖 Commands
+
+| Command | Who | Description |
+|---|---|---|
+| `/start` | Everyone | Register and start the bot |
+| `/help` | Everyone | Show available commands |
+| `/mychannels` | Everyone | List your tracked channels |
+| `/allchannels` | Admin | List all known channels |
+| `/broadcasttoall` | Admin | Send a message to all users |
+
+---
+
+## ⚙️ Setup
+
+### 1. Clone the repo
+
+```bash
+git clone https://github.com/NishulDhakar/Auto-Reaction-Bot.git
+cd Auto-Reaction-Bot
 ```
 
-## Setup
-
-1. Create and activate a virtual environment.
+### 2. Create virtual environment
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-2. Install dependencies.
+### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Create your environment file.
+### 4. Configure environment
 
 ```bash
 cp .env.example .env
 ```
 
-4. Edit `.env`.
+Edit `.env`:
 
-Required values:
+| Variable | Required | Description |
+|---|---|---|
+| `BOT_TOKEN` | ✅ | Token from [@BotFather](https://t.me/BotFather) |
+| `ADMIN_USER_IDS` | ✅ | Comma-separated Telegram user IDs |
+| `DB_PATH` | ❌ | SQLite file path (default: `bot.db`) |
+| `LOG_LEVEL` | ❌ | Logging level (default: `INFO`) |
+| `CLEANUP_DAYS` | ❌ | Days to retain reaction logs |
+| `REACTION_POOL` | ❌ | Comma-separated emoji pool |
 
-- `BOT_TOKEN`: token from BotFather
-- `ADMIN_USER_IDS`: comma-separated Telegram user IDs allowed to use admin commands
-
-Optional values:
-
-- `DB_PATH`: SQLite file path
-- `LOG_LEVEL`: defaults to `INFO`
-- `CLEANUP_DAYS`: how long to keep reaction attempt logs
-- `REACTION_POOL`: comma-separated emoji pool
-
-5. Run the bot.
+### 5. Run
 
 ```bash
 python bot.py
 ```
 
-## BotFather checklist
+---
 
-1. Create the bot with BotFather.
-2. Disable privacy mode only if you later expand the bot to require non-command group messages. This bot does not require that for channel posts.
-3. Add the bot to your channel as an administrator.
+## 🚀 Deployment
 
-## Required channel permissions
+### Systemd (Recommended for Linux/DigitalOcean)
 
-The bot must be an administrator in the channel to reliably receive `channel_post` updates and react to posts.
+```ini
+[Unit]
+Description=Auto Reaction Telegram Bot
+After=network.target
 
-## How channel tracking works
+[Service]
+WorkingDirectory=/path/to/Auto-Reaction-Bot
+ExecStart=/path/to/.venv/bin/python bot.py
+Restart=always
+EnvironmentFile=/path/to/.env
 
-The bot stores channel metadata when Telegram sends a `my_chat_member` update for the bot inside a channel. That normally happens when the bot is added, promoted, demoted, or removed.
+[Install]
+WantedBy=multi-user.target
+```
 
-## Broadcast behavior
+```bash
+sudo systemctl enable auto-reaction-bot
+sudo systemctl start auto-reaction-bot
+```
 
-`/broadcasttoall` sends a message to all active registered private-chat users. If a user blocked the bot, that user is marked inactive automatically.
+---
 
-## Running in production
+---
 
-- Run the bot in a supervised process manager such as `systemd`, Docker, or PM2 equivalent for Python process supervision.
-- Persist the SQLite database on durable storage.
-- Send logs to your platform log collector.
-- If you need horizontal scale, replace SQLite with PostgreSQL and run the bot through webhooks instead of polling.
+## ⚠️ Important: Telegram Limitation
 
-## Notes for future extension
+Telegram only allows **one reaction per bot per message**. This bot rotates through a pool of emoji so each post gets a fresh, varied reaction.
 
-- Replace SQLite with PostgreSQL for multi-instance deployments.
-- Add webhook support behind HTTPS.
-- Add metrics and health endpoints.
-- Add retry classification for transient Telegram API failures.
+---
+
+## 🧑‍💻 Author
+
+Built by [Nishul Dhakar](https://nishul.dev) · [GitHub](https://github.com/NishulDhakar)
+
+## ⚖️ License
+
+MIT — see [LICENSE](LICENSE)

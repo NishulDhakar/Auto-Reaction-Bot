@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="1024" height="1024" alt="Pink heart in speech bubble icon" src="https://github.com/user-attachments/assets/cc9d3491-44e7-40a4-abd1-c3741f9b20d3" alt="Auto Reaction Bot" width="180"/>
+<img width="1024" height="1024" alt="Pink heart in speech bubble icon" src="https://github.com/user-attachments/assets/cc9d3491-44e7-40a4-abd1-c3741f9b20d3" alt="Auto Reaction Bot" width="60"/>
 
 # ❤️ Auto Reaction Bot
 

@@ -63,7 +63,7 @@ def _db() -> sqlite3.Connection:
             );
             CREATE TABLE IF NOT EXISTS channels(
                 cid INTEGER PRIMARY KEY, title TEXT, username TEXT,
-                owner INT, status TEXT
+                chat_type TEXT DEFAULT 'channel', owner INT, status TEXT
             );
             """
         )
@@ -90,22 +90,22 @@ def _get_active_uids() -> list[int]:
     return [r[0] for r in _db().execute("SELECT uid FROM users WHERE active=1").fetchall()]
 
 
-def _save_channel(cid: int, title: str, username: str | None, owner: int | None, status: str) -> None:
+def _save_channel(cid: int, title: str, username: str | None, chat_type: str, owner: int | None, status: str) -> None:
     c = _db()
     c.execute(
-        "INSERT INTO channels(cid,title,username,owner,status) VALUES(?,?,?,?,?) "
+        "INSERT INTO channels(cid,title,username,chat_type,owner,status) VALUES(?,?,?,?,?,?) "
         "ON CONFLICT(cid) DO UPDATE SET title=excluded.title, username=excluded.username, "
-        "owner=COALESCE(excluded.owner,channels.owner), status=excluded.status",
-        (cid, title, username, owner, status),
+        "chat_type=excluded.chat_type, owner=COALESCE(excluded.owner,channels.owner), status=excluded.status",
+        (cid, title, username, chat_type, owner, status),
     )
     c.commit()
 
 
 def _get_channels(owner: int | None = None) -> list[dict]:
     if owner is not None:
-        rows = _db().execute("SELECT title,username,status FROM channels WHERE owner=?", (owner,))
+        rows = _db().execute("SELECT title,username,chat_type,status FROM channels WHERE owner=?", (owner,))
     else:
-        rows = _db().execute("SELECT title,username,status FROM channels")
+        rows = _db().execute("SELECT title,username,chat_type,status FROM channels")
     return [dict(r) for r in rows.fetchall()]
 
 
@@ -142,10 +142,11 @@ async def cmd_mychannels(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         return
     rows = await _run(_get_channels, u.id)
     if not rows:
-        await update.effective_message.reply_text("No channels yet.")
+        await update.effective_message.reply_text("No channels/groups yet.")
         return
     lines = [
         f"• {r['title']}" + (f" @{r['username']}" if r.get("username") else "")
+        + f" ({r.get('chat_type', 'channel')})"
         for r in rows
     ]
     await update.effective_message.reply_text("\n".join(lines))
@@ -160,11 +161,11 @@ async def cmd_allchannels(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         return
     rows = await _run(_get_channels)
     if not rows:
-        await update.effective_message.reply_text("No channels yet.")
+        await update.effective_message.reply_text("No channels/groups yet.")
         return
     lines = [
         f"• {r['title']}" + (f" @{r['username']}" if r.get("username") else "")
-        + f" [{r['status']}]"
+        + f" ({r.get('chat_type', 'channel')}) [{r['status']}]"
         for r in rows
     ]
     await update.effective_message.reply_text("\n".join(lines))
@@ -199,7 +200,7 @@ async def cmd_broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 # ── Channel events ─────────────────────────────────────────────────
 async def on_membership(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     m = update.my_chat_member
-    if not m or m.chat.type != ChatType.CHANNEL:
+    if not m or m.chat.type not in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP):
         return
     ch = m.chat
     actor = m.from_user
@@ -208,25 +209,37 @@ async def on_membership(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         ch.id,
         ch.title or str(ch.id),
         ch.username,
+        ch.type,
         actor.id if actor else None,
         m.new_chat_member.status,
     )
-    log.info("Channel %s (%s) → %s", ch.title, ch.id, m.new_chat_member.status)
+    log.info("%s %s (%s) → %s", ch.type, ch.title, ch.id, m.new_chat_member.status)
 
 
-async def on_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+async def on_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.channel_post
     if not msg:
         return
-    emoji = REACTIONS[(msg.message_id - 1) % len(REACTIONS)]
+    await _react(ctx, msg.chat_id, msg.message_id)
+
+
+async def on_group_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = update.message
+    if not msg:
+        return
+    await _react(ctx, msg.chat_id, msg.message_id)
+
+
+async def _react(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int) -> None:
+    emoji = REACTIONS[(message_id - 1) % len(REACTIONS)]
     try:
         await ctx.bot.set_message_reaction(
-            chat_id=msg.chat_id,
-            message_id=msg.message_id,
+            chat_id=chat_id,
+            message_id=message_id,
             reaction=[ReactionTypeEmoji(emoji=emoji)],
         )
     except TelegramError as e:
-        log.warning("React failed %s/%s: %s", msg.chat_id, msg.message_id, e)
+        log.warning("React failed %s/%s: %s", chat_id, message_id, e)
 
 
 # ── Entry point ────────────────────────────────────────────────────
@@ -255,7 +268,10 @@ def main() -> None:
     app.add_handler(CommandHandler("allchannels", cmd_allchannels))
     app.add_handler(CommandHandler("broadcasttoall", cmd_broadcast))
     app.add_handler(ChatMemberHandler(on_membership, ChatMemberHandler.MY_CHAT_MEMBER))
-    app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_post))
+    app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
+    app.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & ~filters.COMMAND, on_group_message
+    ))
     app.run_polling(
         allowed_updates=["message", "channel_post", "my_chat_member"],
         drop_pending_updates=True,

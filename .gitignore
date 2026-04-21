@@ -1,6 +1,17 @@
+# Environment
 .env
+
+# Python
 .venv/
 __pycache__/
 *.pyc
+
+# Database
 *.db
+
+# OS
 .DS_Store
+
+# Telegram sessions (CRITICAL)
+*.session
+.memory*

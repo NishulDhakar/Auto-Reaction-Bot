@@ -1131,6 +1131,10 @@ def main() -> None:
         .token(BOT_TOKEN)
         .job_queue(None)
         .post_init(_post_init)
+        .read_timeout(30)
+        .write_timeout(30)
+        .connect_timeout(30)
+        .pool_timeout(30)
         .build()
     )
 
@@ -1182,8 +1186,8 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.ChatType.GROUPS & ~filters.COMMAND, on_group_message))
 
     app.run_polling(
-        allowed_updates=["message", "channel_post", "my_chat_member", "callback_query"],
-        drop_pending_updates=True,
+        allowed_updates      = ["message", "channel_post", "my_chat_member", "callback_query"],
+        drop_pending_updates = True,
     )
 
 

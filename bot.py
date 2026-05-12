@@ -1131,11 +1131,12 @@ def main() -> None:
     from telegram.request import HTTPXRequest
 
     request = HTTPXRequest(
-        connect_timeout = 60,
-        read_timeout    = 60,
-        write_timeout   = 60,
-        pool_timeout    = 60,
-        http_version    = "1.1",
+        connection_pool_size = 8,
+        connect_timeout      = 60,
+        read_timeout         = 60,
+        write_timeout        = 60,
+        pool_timeout         = 60,
+        http_version         = "1.1",
     )
 
     app = (

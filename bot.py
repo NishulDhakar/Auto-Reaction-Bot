@@ -4,8 +4,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sqlite3
 from pathlib import Path
+
+import psycopg2
+import psycopg2.extras
 
 from telegram import (
     Bot,
@@ -50,6 +52,7 @@ REACTIONS = tuple(
     if x.strip()
 )
 WELCOME_IMAGE = Path("welcom.png")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 # ── Userbot config ────────────────────────────────────────────────────
 _API_ID   = int(os.environ["API_ID"])   if os.environ.get("API_ID")   else 0
@@ -74,116 +77,147 @@ WAITING_2FA   = 12
 
 _pending_add: dict[int, dict] = {}  # admin_uid → {client, phone, sent}
 
-# ── SQLite ────────────────────────────────────────────────────────────
-_conn: sqlite3.Connection | None = None
+# ── PostgreSQL / Supabase ─────────────────────────────────────────────
+_conn: "psycopg2.extensions.connection | None" = None
 _lock = asyncio.Lock()
 
 
-def _db() -> sqlite3.Connection:
+def _db():
     global _conn
-    if _conn is None:
-        _conn = sqlite3.connect("bot.db", check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.executescript("""
-            PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS users(
-                uid INTEGER PRIMARY KEY, name TEXT, active INT DEFAULT 1
-            );
-            CREATE TABLE IF NOT EXISTS channels(
-                cid INTEGER PRIMARY KEY, title TEXT, username TEXT,
-                chat_type TEXT DEFAULT 'channel', owner INT, status TEXT
-            );
-            CREATE TABLE IF NOT EXISTS userbot_sessions(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                phone TEXT UNIQUE NOT NULL,
-                session_string TEXT NOT NULL
-            );
-        """)
-        # Add chat_type column to existing databases that predate it
-        cols = {r[1] for r in _conn.execute("PRAGMA table_info(channels)").fetchall()}
-        if "chat_type" not in cols:
-            _conn.execute("ALTER TABLE channels ADD COLUMN chat_type TEXT DEFAULT 'channel'")
-            _conn.commit()
+    if _conn is None or _conn.closed:
+        _conn = psycopg2.connect(DATABASE_URL)
+        with _conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    uid BIGINT PRIMARY KEY,
+                    name TEXT,
+                    status TEXT DEFAULT 'active'
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS channels (
+                    cid BIGINT PRIMARY KEY,
+                    title TEXT,
+                    username TEXT,
+                    chat_type TEXT DEFAULT 'channel',
+                    owner BIGINT,
+                    status TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS userbot_sessions (
+                    id SERIAL PRIMARY KEY,
+                    phone TEXT UNIQUE NOT NULL,
+                    session_string TEXT NOT NULL
+                )
+            """)
+        _conn.commit()
     return _conn
 
 
 def _save_user(uid: int, name: str) -> None:
     c = _db()
-    c.execute(
-        "INSERT INTO users(uid,name,active) VALUES(?,?,1) "
-        "ON CONFLICT(uid) DO UPDATE SET name=excluded.name, active=1",
-        (uid, name),
-    )
+    with c.cursor() as cur:
+        cur.execute(
+            "INSERT INTO users(uid,name,status) VALUES(%s,%s,'active') "
+            "ON CONFLICT(uid) DO UPDATE SET name=EXCLUDED.name, status='active'",
+            (uid, name),
+        )
     c.commit()
 
 
-def _deactivate_user(uid: int) -> None:
+def _block_user(uid: int) -> None:
     c = _db()
-    c.execute("UPDATE users SET active=0 WHERE uid=?", (uid,))
+    with c.cursor() as cur:
+        cur.execute("UPDATE users SET status='blocked' WHERE uid=%s", (uid,))
     c.commit()
 
 
 def _get_active_uids() -> list[int]:
-    return [r[0] for r in _db().execute("SELECT uid FROM users WHERE active=1").fetchall()]
+    c = _db()
+    with c.cursor() as cur:
+        cur.execute("SELECT uid FROM users WHERE status='active'")
+        return [r[0] for r in cur.fetchall()]
 
 
 def _count_users() -> int:
-    return _db().execute("SELECT COUNT(*) FROM users WHERE active=1").fetchone()[0]
+    c = _db()
+    with c.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM users WHERE status='active'")
+        return (cur.fetchone() or (0,))[0]
+
+
+def _count_users_all() -> dict:
+    c = _db()
+    with c.cursor() as cur:
+        cur.execute("SELECT status, COUNT(*) FROM users GROUP BY status")
+        counts: dict = {"active": 0, "blocked": 0, "total": 0}
+        for status, count in cur.fetchall():
+            counts[status] = count
+            counts["total"] += count
+    return counts
 
 
 def _save_channel(cid: int, title: str, username: str | None,
                   chat_type: str, owner: int | None, status: str) -> None:
     c = _db()
-    c.execute(
-        "INSERT INTO channels(cid,title,username,chat_type,owner,status) VALUES(?,?,?,?,?,?) "
-        "ON CONFLICT(cid) DO UPDATE SET title=excluded.title, username=excluded.username, "
-        "chat_type=excluded.chat_type, owner=COALESCE(excluded.owner,channels.owner), status=excluded.status",
-        (cid, title, username, chat_type, owner, status),
-    )
+    with c.cursor() as cur:
+        cur.execute(
+            "INSERT INTO channels(cid,title,username,chat_type,owner,status) VALUES(%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT(cid) DO UPDATE SET title=EXCLUDED.title, username=EXCLUDED.username, "
+            "chat_type=EXCLUDED.chat_type, owner=COALESCE(EXCLUDED.owner,channels.owner), status=EXCLUDED.status",
+            (cid, title, username, chat_type, owner, status),
+        )
     c.commit()
 
 
 def _get_channels(owner: int | None = None) -> list[dict]:
-    if owner is not None:
-        rows = _db().execute(
-            "SELECT cid,title,username,chat_type,status FROM channels WHERE owner=?", (owner,)
-        )
-    else:
-        rows = _db().execute("SELECT cid,title,username,chat_type,status FROM channels")
-    return [dict(r) for r in rows.fetchall()]
+    c = _db()
+    with c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        if owner is not None:
+            cur.execute("SELECT cid,title,username,chat_type,status FROM channels WHERE owner=%s", (owner,))
+        else:
+            cur.execute("SELECT cid,title,username,chat_type,status FROM channels")
+        return [dict(r) for r in cur.fetchall()]
 
 
 def _count_channels() -> int:
-    return _db().execute("SELECT COUNT(*) FROM channels").fetchone()[0]
+    c = _db()
+    with c.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM channels")
+        return (cur.fetchone() or (0,))[0]
 
 
 def _get_all_channel_ids() -> list[int]:
-    return [r[0] for r in _db().execute("SELECT cid FROM channels").fetchall()]
+    c = _db()
+    with c.cursor() as cur:
+        cur.execute("SELECT cid FROM channels")
+        return [r[0] for r in cur.fetchall()]
 
 
 def _save_userbot_session(phone: str, session_string: str) -> None:
     c = _db()
-    c.execute(
-        "INSERT INTO userbot_sessions(phone, session_string) VALUES(?,?) "
-        "ON CONFLICT(phone) DO UPDATE SET session_string=excluded.session_string",
-        (phone, session_string),
-    )
+    with c.cursor() as cur:
+        cur.execute(
+            "INSERT INTO userbot_sessions(phone, session_string) VALUES(%s,%s) "
+            "ON CONFLICT(phone) DO UPDATE SET session_string=EXCLUDED.session_string",
+            (phone, session_string),
+        )
     c.commit()
 
 
 def _get_db_userbot_sessions() -> list[dict]:
-    return [
-        dict(r)
-        for r in _db().execute("SELECT id, phone, session_string FROM userbot_sessions").fetchall()
-    ]
+    c = _db()
+    with c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT id, phone, session_string FROM userbot_sessions")
+        return [dict(r) for r in cur.fetchall()]
 
 
 def _get_all_channels_brief() -> list[tuple[int, str | None]]:
-    """Return (cid, username) for every registered channel."""
-    return [
-        (r[0], r[1])
-        for r in _db().execute("SELECT cid, username FROM channels").fetchall()
-    ]
+    c = _db()
+    with c.cursor() as cur:
+        cur.execute("SELECT cid, username FROM channels")
+        return [(r[0], r[1]) for r in cur.fetchall()]
 
 
 async def _run(fn, *args):
@@ -572,9 +606,12 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     if not u or not msg or u.id not in SUPER_ADMIN_IDS:
         return
+    uc = await _run(_count_users_all)
     await msg.reply_text(
         f"📊 *Stats*\n\n"
-        f"👥 Users: *{await _run(_count_users)}*\n"
+        f"👥 Total users: *{uc['total']}*\n"
+        f"✅ Active: *{uc['active']}*\n"
+        f"🚫 Blocked bot: *{uc['blocked']}*\n"
         f"📢 Channels: *{await _run(_count_channels)}*",
         parse_mode="Markdown",
     )
@@ -585,23 +622,37 @@ async def cmd_broadcast_users(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
     msg = update.effective_message
     if not u or not msg or u.id not in SUPER_ADMIN_IDS:
         return
+
+    reply = msg.reply_to_message
     text = " ".join(ctx.args or []).strip()
-    if not text:
-        await msg.reply_text("Usage: `/broadcast Your message`", parse_mode="Markdown")
+
+    if not reply and not text:
+        await msg.reply_text(
+            "Usage:\n"
+            "• Reply to any message with `/broadcast` to forward it to all users\n"
+            "• Or: `/broadcast Your text here`",
+            parse_mode="Markdown",
+        )
         return
+
     uids = await _run(_get_active_uids)
     ok = fail = 0
     status_msg = await msg.reply_text(f"Sending to {len(uids)} users…")
+
     for uid in uids:
         try:
-            await ctx.bot.send_message(uid, f"📣 *Announcement*\n\n{text}", parse_mode="Markdown")
+            if reply:
+                await reply.copy(uid)
+            else:
+                await ctx.bot.send_message(uid, f"📣 *Announcement*\n\n{text}", parse_mode="Markdown")
             ok += 1
         except Forbidden:
-            await _run(_deactivate_user, uid)
+            await _run(_block_user, uid)
             fail += 1
         except TelegramError:
             fail += 1
         await asyncio.sleep(0.05)
+
     await status_msg.edit_text(f"✅ Done — Sent: {ok}, Failed: {fail}")
 
 
@@ -610,21 +661,35 @@ async def cmd_broadcast_channels(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
     msg = update.effective_message
     if not u or not msg or u.id not in SUPER_ADMIN_IDS:
         return
+
+    reply = msg.reply_to_message
     text = " ".join(ctx.args or []).strip()
-    if not text:
-        await msg.reply_text("Usage: `/broadcastchannels Your message`", parse_mode="Markdown")
+
+    if not reply and not text:
+        await msg.reply_text(
+            "Usage:\n"
+            "• Reply to any message with `/broadcastchannels` to forward it to all channels\n"
+            "• Or: `/broadcastchannels Your text here`",
+            parse_mode="Markdown",
+        )
         return
+
     cids = await _run(_get_all_channel_ids)
     ok = fail = 0
     status_msg = await msg.reply_text(f"Broadcasting to {len(cids)} channels…")
+
     for cid in cids:
         try:
-            await ctx.bot.send_message(cid, f"📣 *Announcement*\n\n{text}", parse_mode="Markdown")
+            if reply:
+                await reply.copy(cid)
+            else:
+                await ctx.bot.send_message(cid, f"📣 *Announcement*\n\n{text}", parse_mode="Markdown")
             ok += 1
         except TelegramError as e:
             log.warning("Chan broadcast %s: %s", cid, e)
             fail += 1
         await asyncio.sleep(0.1)
+
     await status_msg.edit_text(f"✅ Done — Sent: {ok}, Failed: {fail}")
 
 
@@ -709,9 +774,12 @@ async def cb_admin_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         return
     await query.answer()
     back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="admin_panel")]])
+    uc = await _run(_count_users_all)
     text = (
         f"📊 *Stats*\n\n"
-        f"👥 Users: *{await _run(_count_users)}*\n"
+        f"👥 Total users: *{uc['total']}*\n"
+        f"✅ Active: *{uc['active']}*\n"
+        f"🚫 Blocked bot: *{uc['blocked']}*\n"
         f"📢 Channels: *{await _run(_count_channels)}*\n"
         f"🤖 Active userbots: *{len(_userbot_clients)}*"
     )

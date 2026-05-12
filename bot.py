@@ -1128,15 +1128,22 @@ async def _post_init(app: Application) -> None:
 
 def main() -> None:
     _db()
+    from telegram.request import HTTPXRequest
+
+    request = HTTPXRequest(
+        connect_timeout = 60,
+        read_timeout    = 60,
+        write_timeout   = 60,
+        pool_timeout    = 60,
+        http_version    = "1.1",
+    )
+
     app = (
         Application.builder()
         .token(BOT_TOKEN)
+        .request(request)
         .job_queue(None)
         .post_init(_post_init)
-        .read_timeout(60)
-        .write_timeout(60)
-        .connect_timeout(60)
-        .pool_timeout(60)
         .build()
     )
 

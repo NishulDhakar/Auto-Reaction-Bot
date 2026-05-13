@@ -12,7 +12,6 @@ import psycopg2.extras
 
 
 from telegram import (
-    Bot,
     BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -20,6 +19,7 @@ from telegram import (
     ReactionTypeEmoji,
     Update,
 )
+from telegram.request import HTTPXRequest
 from telegram.constants import ChatMemberStatus, ChatType
 from telegram.error import Forbidden, TelegramError
 from telegram.ext import (
@@ -91,7 +91,9 @@ def _db():
         if _conn is None or _conn.closed:
             return True
         try:
-            _conn.cursor().execute("SELECT 1")
+            with _conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            _conn.rollback()
             return False
         except Exception:
             return True
@@ -155,12 +157,6 @@ def _get_active_uids() -> list[int]:
         cur.execute("SELECT uid FROM users WHERE status='active'")
         return [r[0] for r in cur.fetchall()]
 
-
-def _count_users() -> int:
-    c = _db()
-    with c.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM users WHERE status='active'")
-        return (cur.fetchone() or (0,))[0]
 
 
 def _count_users_all() -> dict:
@@ -926,7 +922,7 @@ async def _finish_add_userbot(admin_uid: int, msg) -> int:
 
         # Join new userbot into every registered channel immediately
         main_bot = _app.bot if _app else None  # type: ignore[union-attr]
-        for cid, uname in await asyncio.to_thread(_get_all_channels_brief):
+        for cid, uname in await _run(_get_all_channels_brief):
             _cache_username(cid, uname)
             try:
                 join_target: str = uname.lstrip("@") if uname else ""
@@ -1106,7 +1102,7 @@ async def _post_init(app: Application) -> None:
     if _API_ID and _API_HASH:
         from pyrogram import Client as _PyroClient  # type: ignore
         all_sessions: list[str] = list(_USERBOT_SESSIONS)
-        for row in await asyncio.to_thread(_get_db_userbot_sessions):
+        for row in await _run(_get_db_userbot_sessions):
             if row["session_string"] not in all_sessions:
                 all_sessions.append(row["session_string"])
         for i, sess in enumerate(all_sessions):
@@ -1128,7 +1124,7 @@ async def _post_init(app: Application) -> None:
         log.warning("No userbots active — only main bot will react")
 
     # Cache usernames and auto-join userbots into all existing channels
-    for cid, uname in await asyncio.to_thread(_get_all_channels_brief):
+    for cid, uname in await _run(_get_all_channels_brief):
         _cache_username(cid, uname)
         await _userbot_join(cid, uname, main_bot=app.bot)
 
@@ -1142,8 +1138,6 @@ async def _post_init(app: Application) -> None:
 
 def main() -> None:
     _db()
-    from telegram.request import HTTPXRequest
-
     request = HTTPXRequest(
         connection_pool_size = 8,
         connect_timeout      = 60,

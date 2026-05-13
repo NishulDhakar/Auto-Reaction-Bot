@@ -86,8 +86,22 @@ _lock = asyncio.Lock()
 
 def _db():
     global _conn
-    if _conn is None or _conn.closed:
-        _conn = psycopg2.connect(DATABASE_URL)
+
+    def _needs_reconnect():
+        if _conn is None or _conn.closed:
+            return True
+        try:
+            _conn.cursor().execute("SELECT 1")
+            return False
+        except Exception:
+            return True
+
+    if _needs_reconnect():
+        dsn = DATABASE_URL
+        if "sslmode" not in dsn:
+            sep = "&" if "?" in dsn else "?"
+            dsn += f"{sep}sslmode=require"
+        _conn = psycopg2.connect(dsn)
         with _conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (

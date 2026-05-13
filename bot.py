@@ -109,8 +109,13 @@ def _db():
                 CREATE TABLE IF NOT EXISTS users (
                     uid BIGINT PRIMARY KEY,
                     name TEXT,
-                    status TEXT DEFAULT 'active'
+                    status TEXT DEFAULT 'active',
+                    joined_channel BOOLEAN DEFAULT FALSE
                 )
+            """)
+            cur.execute("""
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS joined_channel BOOLEAN DEFAULT FALSE
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS channels (
@@ -137,9 +142,19 @@ def _save_user(uid: int, name: str) -> None:
     c = _db()
     with c.cursor() as cur:
         cur.execute(
-            "INSERT INTO users(uid,name,status) VALUES(%s,%s,'active') "
+            "INSERT INTO users(uid,name,status,joined_channel) VALUES(%s,%s,'active',FALSE) "
             "ON CONFLICT(uid) DO UPDATE SET name=EXCLUDED.name, status='active'",
             (uid, name),
+        )
+    c.commit()
+
+
+def _mark_channel_joined(uid: int) -> None:
+    c = _db()
+    with c.cursor() as cur:
+        cur.execute(
+            "UPDATE users SET joined_channel=TRUE WHERE uid=%s",
+            (uid,),
         )
     c.commit()
 
@@ -163,10 +178,12 @@ def _count_users_all() -> dict:
     c = _db()
     with c.cursor() as cur:
         cur.execute("SELECT status, COUNT(*) FROM users GROUP BY status")
-        counts: dict = {"active": 0, "blocked": 0, "total": 0}
+        counts: dict = {"active": 0, "blocked": 0, "total": 0, "joined_channel": 0}
         for status, count in cur.fetchall():
             counts[status] = count
             counts["total"] += count
+        cur.execute("SELECT COUNT(*) FROM users WHERE joined_channel=TRUE")
+        counts["joined_channel"] = (cur.fetchone() or (0,))[0]
     return counts
 
 
@@ -318,15 +335,15 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not u or not msg:
         return
 
+    await _run(_save_user, u.id, u.first_name)
+
     subscribed = await _is_subscribed(ctx.bot, u.id)
-    if subscribed is not True:
-        # False = not joined, None = check failed (bot not admin of required channel)
-        if subscribed is None:
-            log.error("Subscription check failed uid=%s — is bot admin of %s?", u.id, REQUIRED_CHANNEL)
+    if subscribed is False:
         await _send_join_gate(ctx.bot, u.id)
         return
+    if subscribed is None:
+        log.warning("Subscription check failed uid=%s — bot not admin of %s, letting user through", u.id, REQUIRED_CHANNEL)
 
-    await _run(_save_user, u.id, u.first_name)
     await _send_welcome(ctx.bot, u.id, is_admin=u.id in SUPER_ADMIN_IDS)
 
 
@@ -341,17 +358,18 @@ async def cb_check_join(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     subscribed = await _is_subscribed(ctx.bot, u.id)
-    if subscribed is not True:
-        if subscribed is None:
-            log.error("Subscription check failed uid=%s — bot not admin of %s?", u.id, REQUIRED_CHANNEL)
+    if subscribed is False:
         await query.answer(
             "❌ You haven't joined yet!\nJoin the channel first then tap this button.",
             show_alert=True,
         )
         return
+    if subscribed is None:
+        log.warning("Subscription check failed uid=%s — bot not admin of %s, letting user through", u.id, REQUIRED_CHANNEL)
 
     await query.answer("✅ Verified! Welcome aboard.")
     await _run(_save_user, u.id, u.first_name)
+    await _run(_mark_channel_joined, u.id)
     kb = _home_keyboard(is_admin=u.id in SUPER_ADMIN_IDS)
 
     # Swap the join gate caption/keyboard into the welcome screen in-place
@@ -621,10 +639,10 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     uc = await _run(_count_users_all)
     await msg.reply_text(
         f"📊 *Stats*\n\n"
-        f"👥 Total users: *{uc['total']}*\n"
-        f"✅ Active: *{uc['active']}*\n"
+        f"🤖 Bot users: *{uc['total']}*\n"
+        f"📢 Channel joined: *{uc['joined_channel']}*\n"
         f"🚫 Blocked bot: *{uc['blocked']}*\n"
-        f"📢 Channels: *{await _run(_count_channels)}*",
+        f"📡 Channels: *{await _run(_count_channels)}*",
         parse_mode="Markdown",
     )
 
@@ -789,11 +807,11 @@ async def cb_admin_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     uc = await _run(_count_users_all)
     text = (
         f"📊 *Stats*\n\n"
-        f"👥 Total users: *{uc['total']}*\n"
-        f"✅ Active: *{uc['active']}*\n"
+        f"🤖 Bot users: *{uc['total']}*\n"
+        f"📢 Channel joined: *{uc['joined_channel']}*\n"
         f"🚫 Blocked bot: *{uc['blocked']}*\n"
-        f"📢 Channels: *{await _run(_count_channels)}*\n"
-        f"🤖 Active userbots: *{len(_userbot_clients)}*"
+        f"📡 Channels: *{await _run(_count_channels)}*\n"
+        f"👾 Active userbots: *{len(_userbot_clients)}*"
     )
     try:
         if msg.photo:
